@@ -23,12 +23,18 @@ TRADING_DAYS_PER_YEAR: Final[int] = 252
 
 
 THEME_COLORS: Final[dict[str, str]] = {
-    "primary": "#2563EB",  # indigo-500
-    "accent": "#7C3AED",   # purple-500
-    "bg_light": "#F8FAFC",  # slate-50
-    "bg_dark": "#0F172A",   # slate-900
-    "positive": "#16A34A",  # green-500
-    "negative": "#DC2626",  # red-600
+    "primary": "#6366F1",
+    "accent": "#8B5CF6",
+    "badge_bg": "rgba(99,102,241,0.18)",
+    "section_bg": "rgba(255,255,255,0.6)",
+    "border": "rgba(148,163,184,0.35)",
+    "metric_bg": "rgba(99,102,241,0.18)",
+    "text_primary": "inherit",
+    "text_secondary": "inherit",
+    "tag_bg": "#EF4444",
+    "tag_text": "#FFFFFF",
+    "slider_active": "#6366F1",
+    "slider_thumb": "#EF4444",
 }
 
 

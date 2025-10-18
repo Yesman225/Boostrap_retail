@@ -1,12 +1,10 @@
-"""Plotting helpers for portfolio visuals."""
+"""Plotting helpers using Altair for Streamlit-friendly visuals."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
+import altair as alt
 import numpy as np
 import pandas as pd
 
@@ -16,26 +14,9 @@ from src.portfolio.frontier import EfficientFrontier
 
 @dataclass
 class PortfolioPlotBundle:
-    price_figure: plt.Figure
-    weights_figure: plt.Figure
+    price_chart: alt.Chart
+    allocation_chart: alt.Chart
     allocation_table: pd.DataFrame
-
-
-plt.rcParams.update(
-    {
-        "font.family": "Poppins",
-        "axes.edgecolor": "#e2e8f0",
-        "axes.linewidth": 1.0,
-        "axes.titlesize": 12,
-        "axes.titlecolor": "#0f172a",
-        "axes.labelcolor": "#475569",
-        "xtick.color": "#64748b",
-        "ytick.color": "#64748b",
-        "grid.color": "#e2e8f0",
-        "figure.facecolor": "white",
-        "axes.facecolor": "white",
-    }
-)
 
 
 def allocation_table(weights: Sequence[float], labels: Sequence[str]) -> pd.DataFrame:
@@ -45,114 +26,93 @@ def allocation_table(weights: Sequence[float], labels: Sequence[str]) -> pd.Data
     return df
 
 
-def weights_pie(weights: Sequence[float], labels: Sequence[str]) -> plt.Figure:
-    colors = plt.cm.Spectral(np.linspace(0.1, 0.9, len(weights)))
+def weights_pie(weights: Sequence[float], labels: Sequence[str]) -> alt.Chart:
     weights = np.asarray(weights)
     mask = weights > 0.002
     filtered_weights = weights[mask]
     filtered_labels = np.asarray(labels)[mask]
 
-    fig, ax = plt.subplots(figsize=(6, 6))
-    wedges, texts, autotexts = ax.pie(
-        filtered_weights,
-        labels=None,
-        startangle=110,
-        colors=colors[: len(filtered_weights)],
-        autopct="%1.1f%%",
-        pctdistance=0.75,
-        textprops={"color": "#0f172a", "fontsize": 9},
+    chart_data = pd.DataFrame({"Stock": filtered_labels, "Weight": filtered_weights})
+
+    chart = (
+        alt.Chart(chart_data)
+        .mark_arc(outerRadius=120, innerRadius=60)
+        .encode(
+            theta="Weight",
+            color=alt.Color("Stock", legend=alt.Legend(title="Holdings"), scale=alt.Scale(scheme="purples")),
+            tooltip=["Stock", alt.Tooltip("Weight", format=".2%")],
+        )
     )
 
-    for autotext in autotexts:
-        autotext.set_color("white")
-        autotext.set_fontweight("600")
+    return chart
 
-    centre_circle = plt.Circle((0, 0), 0.50, fc="white")
-    ax.add_artist(centre_circle)
 
-    ax.legend(
-        wedges,
-        filtered_labels,
-        title="Holdings",
-        loc="center left",
-        bbox_to_anchor=(1, 0, 0.4, 1),
-        frameon=False,
+def price_evolution(prices: pd.Series, *, title: str, subtitle: str) -> alt.Chart:
+    series = prices.sort_index().dropna()
+    if series.empty:
+        return alt.Chart(pd.DataFrame({"Date": [], "Value": []})).mark_line()
+
+    if len(series) > 600:
+        series = series.resample("M").last().dropna()
+
+    base = series.iloc[0]
+    rebased = series / base * 100 if base != 0 else series.copy()
+
+    chart_data = pd.DataFrame({"Date": rebased.index, "Value": rebased.values})
+
+    chart = (
+        alt.Chart(chart_data)
+        .mark_line(color=THEME_COLORS["primary"], interpolate="monotone")
+        .encode(x="Date:T", y=alt.Y("Value:Q", title="Rebased value (start = 100)"), tooltip=["Date:T", alt.Tooltip("Value:Q", format=",.0f")])
+        .properties(title=alt.TitleParams(text=title, subtitle=subtitle, anchor="start"))
     )
-    ax.set_title("Portfolio allocation", fontweight="600")
-    return fig
 
-
-def price_evolution(prices: pd.Series, *, title: str, subtitle: str) -> plt.Figure:
-    colors = THEME_COLORS
-    fig, ax = plt.subplots(figsize=(9, 5))
-    ax.plot(
-        prices.index,
-        prices.values,
-        color=colors["primary"],
-        linewidth=2.5,
-        alpha=0.9,
-    )
-    ax.fill_between(
-        prices.index,
-        prices.values,
-        color=colors["primary"],
-        alpha=0.12,
-    )
-    ax.set_title(title, loc="left", fontweight="600")
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Portfolio value (€)")
-    ax.xaxis.set_major_formatter(mdates.AutoDateFormatter(mdates.AutoDateLocator()))
-    ax.yaxis.set_major_formatter(ticker.StrMethodFormatter("{x:,.0f}"))
-    ax.grid(True, which="major", linestyle="--", linewidth=0.6, alpha=0.4)
-
-    fig.text(0.02, 0.93, subtitle, fontsize=10, color="#475569")
-    fig.tight_layout()
-    return fig
+    area = chart.mark_area(opacity=0.15)
+    return area + chart
 
 
 def efficient_frontier_plot(
     frontier: EfficientFrontier,
     *,
     subset: Iterable[EfficientFrontier] | None = None,
-    representative_colour: str = THEME_COLORS["accent"],
+    representative_colour: str | None = None,
     highlight: tuple[float, float] | None = None,
-) -> plt.Figure:
-    fig, ax = plt.subplots(figsize=(6.5, 5.2))
+) -> alt.Chart:
+    colors = THEME_COLORS
+    curve_colour = representative_colour or colors["accent"]
+
+    base = frontier.as_dataframe().assign(Source="Representative")
+    chart_data = base.copy()
+
+    layers: list[alt.Chart] = []
 
     if subset:
+        subset_frames = []
         for candidate in subset:
-            data = candidate.as_dataframe()
-            ax.scatter(
-                data["volatility"],
-                data["expected_return"],
-                color="#cbd5f5",
-                alpha=0.25,
-                s=20,
+            subset_frames.append(candidate.as_dataframe().assign(Source="Scenario"))
+        if subset_frames:
+            subset_df = pd.concat(subset_frames, ignore_index=True)
+            scenarios = (
+                alt.Chart(subset_df)
+                .mark_point(color="lightgray", opacity=0.35)
+                .encode(x="volatility", y="expected_return")
             )
+            layers.append(scenarios)
 
-    df = frontier.as_dataframe()
-    ax.plot(
-        df["volatility"],
-        df["expected_return"],
-        color=representative_colour,
-        linewidth=2.5,
-        marker="o",
-        markerfacecolor="white",
-        markeredgewidth=0.8,
+    frontier_line = (
+        alt.Chart(chart_data)
+        .mark_line(color=curve_colour, point=alt.OverlayMarkDef(color="white", size=70, stroke=curve_colour))
+        .encode(x=alt.X("volatility", title="Volatility (risk)"), y=alt.Y("expected_return", title="Expected return"), tooltip=[alt.Tooltip("volatility", format=".2%"), alt.Tooltip("expected_return", format=".2%")])
     )
-    if highlight is not None:
-        ax.scatter(
-            highlight[0],
-            highlight[1],
-            color=THEME_COLORS["primary"],
-            s=120,
-            edgecolor="white",
-            linewidth=1.5,
-            zorder=5,
-        )
+    layers.append(frontier_line)
 
-    ax.set_xlabel("Volatility (risk)")
-    ax.set_ylabel("Expected return")
-    ax.set_title("Risk vs return map", fontweight="600")
-    ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.4)
-    return fig
+    if highlight is not None:
+        highlight_df = pd.DataFrame({"volatility": [highlight[0]], "expected_return": [highlight[1]]})
+        highlight_chart = (
+            alt.Chart(highlight_df)
+            .mark_point(color=colors["primary"], size=120, filled=True)
+            .encode(x="volatility", y="expected_return")
+        )
+        layers.append(highlight_chart)
+
+    return alt.layer(*layers).properties(title="Risk vs return map")

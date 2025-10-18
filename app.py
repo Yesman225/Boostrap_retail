@@ -22,93 +22,11 @@ st.set_page_config(
 )
 
 
-def inject_global_styles() -> None:
-    colors = config.THEME_COLORS
-    st.markdown(
-        f"""
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
-
-            html, body, [class^="css"]  {{
-                font-family: 'Poppins', sans-serif;
-                background-color: {colors["bg_light"]};
-            }}
-
-            .stApp {{
-                background-color: {colors["bg_light"]};
-            }}
-
-            .section-card {{
-                background-color: white;
-                padding: 1.5rem;
-                border-radius: 18px;
-                box-shadow: 0 10px 40px rgba(15, 23, 42, 0.08);
-                margin-bottom: 1.5rem;
-                border: 1px solid rgba(15, 23, 42, 0.04);
-            }}
-
-            .metric-card {{
-                padding: 1rem 1.2rem;
-                border-radius: 16px;
-                background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(124, 58, 237, 0.12));
-                border: 1px solid rgba(37, 99, 235, 0.1);
-                color: #0f172a;
-            }}
-
-            .badge {{
-                display: inline-flex;
-                align-items: center;
-                gap: 0.4rem;
-                padding: 0.35rem 0.75rem;
-                border-radius: 999px;
-                font-size: 0.75rem;
-                font-weight: 600;
-                background-color: rgba(37, 99, 235, 0.1);
-                color: {colors["primary"]};
-            }}
-
-            .stButton button {{
-                border-radius: 999px;
-                padding: 0.6rem 1.3rem;
-                font-weight: 600;
-                border: none;
-                background: linear-gradient(135deg, {colors["primary"]}, {colors["accent"]});
-                color: white;
-                box-shadow: 0 12px 30px rgba(37, 99, 235, 0.25);
-                transition: transform 0.15s ease, box-shadow 0.15s ease;
-            }}
-
-            .stButton button:hover {{
-                transform: translateY(-1px);
-                box-shadow: 0 18px 40px rgba(37, 99, 235, 0.35);
-            }}
-
-            .block-container {{
-                padding-top: 1.5rem;
-            }}
-
-            .stRadio > div {{
-                background-color: transparent;
-            }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def main() -> None:
-    inject_global_styles()
-
-    st.markdown(
-        """
-        <div class="badge">Smart guidance</div>
-        <h1 style="margin-top:0.6rem;">European Portfolio Co-Pilot</h1>
-        <p style="font-size:0.95rem;color:#475569;max-width:680px;">
-            Explore leading European stocks, compare ready-made strategies, or craft your own mix.
-            We crunch the numbers so you can focus on your goals.
-        </p>
-        """,
-        unsafe_allow_html=True,
+    st.title("European Portfolio Co-Pilot")
+    st.caption(
+        "Explore leading European stocks, compare ready-made strategies, or craft your own mix. "
+        "We crunch the numbers so you can focus on your goals."
     )
 
     indices_df = get_indices_dataframe()
@@ -116,55 +34,52 @@ def main() -> None:
         st.error("No index constituents could be loaded. Check your network connection.")
         return
 
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown("<h3 style='margin-top:0;'>1. Choose your universe</h3>", unsafe_allow_html=True)
-    st.write("Pick your investment playground. We shortlist the stocks that match your filters.")
+    with st.container():
+        st.subheader("1. Choose your universe")
+        st.write("Pick your investment playground. We shortlist the stocks that match your filters.")
 
-    top_cols = st.columns([2, 1])
-    with top_cols[0]:
-        selected_indices = widgets.multiselect_indices(sorted(config.INDEX_URLS.keys()))
-    with top_cols[1]:
-        min_years = st.slider(
-            "Minimum listing age",
-            min_value=1,
-            max_value=30,
-            value=config.DEFAULT_HISTORY_YEARS,
-            help="Older listings give us enough history to understand how the stock behaves.",
+        top_cols = st.columns([2, 1])
+        with top_cols[0]:
+            selected_indices = widgets.multiselect_indices(sorted(config.INDEX_URLS.keys()))
+        with top_cols[1]:
+            min_years = st.slider(
+                "Minimum listing age",
+                min_value=1,
+                max_value=30,
+                value=config.DEFAULT_HISTORY_YEARS,
+                help="Older listings give us enough history to understand how the stock behaves.",
+            )
+            require_eur = st.toggle("Only show EUR stocks", value=True)
+
+        filtered = indices_df[indices_df["index_name"].isin(selected_indices)].copy()
+        filtered["ticker"] = filtered.apply(_normalise_symbol, axis=1)
+        filtered = filtered.dropna(subset=["ticker"]).drop_duplicates(subset=["ticker"])
+
+        tickers = filtered["ticker"].tolist()
+        if not tickers:
+            st.warning("No tickers available for the selected indices.")
+            return
+
+        history_ok = apply_ticker_filters(tickers, min_years, require_eur)
+        filtered = filtered[filtered["ticker"].isin(history_ok)]
+
+        with st.expander("Show company list", expanded=False):
+            st.dataframe(
+                filtered[["index_name", "company", "ticker"]]
+                .sort_values(["index_name", "company"])
+                .reset_index(drop=True),
+                hide_index=True,
+            )
+
+        selection = st.multiselect(
+            "Pick the companies you want to explore",
+            options=filtered["ticker"],
+            format_func=lambda t: f"{filtered.loc[filtered['ticker']==t, 'company'].iloc[0]} ({t})",
+            default=filtered["ticker"].head(8).tolist(),
+            help="You can simply keep the suggested list or build your own watchlist.",
         )
-        require_eur = st.toggle("Only show EUR stocks", value=True)
-
-    filtered = indices_df[indices_df["index_name"].isin(selected_indices)].copy()
-    filtered["ticker"] = filtered.apply(_normalise_symbol, axis=1)
-    filtered = filtered.dropna(subset=["ticker"]).drop_duplicates(subset=["ticker"])
-
-    tickers = filtered["ticker"].tolist()
-    if not tickers:
-        st.warning("No tickers available for the selected indices.")
-        st.markdown("</div>", unsafe_allow_html=True)
-        return
-
-    history_ok = apply_ticker_filters(tickers, min_years, require_eur)
-    filtered = filtered[filtered["ticker"].isin(history_ok)]
-
-    with st.expander("Show company list", expanded=False):
-        st.dataframe(
-            filtered[["index_name", "company", "ticker"]]
-            .sort_values(["index_name", "company"])
-            .reset_index(drop=True),
-            hide_index=True,
-        )
-
-    selection = st.multiselect(
-        "Pick the companies you want to explore",
-        options=filtered["ticker"],
-        format_func=lambda t: f"{filtered.loc[filtered['ticker']==t, 'company'].iloc[0]} ({t})",
-        default=filtered["ticker"].head(8).tolist(),
-        help="You can simply keep the suggested list or build your own watchlist.",
-    )
-    state.set_selected_tickers(selection)
-    chosen = state.get_selected_tickers()
-
-    st.markdown("</div>", unsafe_allow_html=True)
+        state.set_selected_tickers(selection)
+        chosen = state.get_selected_tickers()
 
     if len(chosen) < 2:
         st.info("Select at least two companies to build a portfolio.")
@@ -190,49 +105,48 @@ def main() -> None:
     def _annualised(daily_return: float) -> float:
         return (1 + daily_return) ** config.TRADING_DAYS_PER_YEAR - 1
 
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown("<h3 style='margin-top:0;'>2. Shape your risk & return</h3>", unsafe_allow_html=True)
-    st.write("Slide along the efficient frontier to balance confidence and ambition.")
+    with st.container():
+        st.subheader("2. Shape your risk & return")
+        st.write("Slide along the efficient frontier to balance stability and growth.")
 
-    metrics_cols = st.columns(3)
-    with metrics_cols[0]:
-        st.metric(
-            "Safest mix",
-            f"{_annualised(min_point.expected_return):.2%}",
-            help="Annualised return of the minimum-risk portfolio.",
+        metrics_cols = st.columns(3)
+        with metrics_cols[0]:
+            st.metric(
+                "Safest mix",
+                f"{_annualised(min_point.expected_return):.2%}",
+                help="Annualised return of the minimum-risk portfolio.",
+            )
+        with metrics_cols[1]:
+            st.metric(
+                "Balanced option",
+                f"{_annualised(mid_point.expected_return):.2%}",
+                help="Return halfway along the curve.",
+            )
+        with metrics_cols[2]:
+            st.metric(
+                "Max performance",
+                f"{_annualised(max_point.expected_return):.2%}",
+                help="Annualised return of the highest-return mix.",
+            )
+
+        risk_level = st.slider(
+            "Move the slider to tune your risk appetite",
+            min_value=0,
+            max_value=100,
+            value=0,
+            help="0% keeps risk at its minimum. 100% pursues the highest return on the curve.",
         )
-    with metrics_cols[1]:
-        st.metric(
-            "Balanced option",
-            f"{_annualised(mid_point.expected_return):.2%}",
-            help="Return halfway along the curve.",
-        )
-    with metrics_cols[2]:
-        st.metric(
-            "Max performance",
-            f"{_annualised(max_point.expected_return):.2%}",
-            help="Annualised return of the highest-return mix.",
-        )
+        idx = int(round(risk_level / 100 * (len(eff_frontier.points) - 1)))
+        selected_point = eff_frontier.points[idx]
 
-    risk_level = st.slider(
-        "Move the slider to tune your risk appetite",
-        min_value=0,
-        max_value=100,
-        value=0,
-        help="0% keeps risk at its minimum. 100% pursues the highest return on the curve.",
-    )
-    idx = int(round(risk_level / 100 * (len(eff_frontier.points) - 1)))
-    selected_point = eff_frontier.points[idx]
+        if risk_level == 0:
+            focus = "Safest mix"
+        elif risk_level == 100:
+            focus = "Maximum performance"
+        else:
+            focus = "Custom balance"
 
-    if risk_level == 0:
-        focus = "Safest mix"
-    elif risk_level == 100:
-        focus = "Maximum performance"
-    else:
-        focus = "Custom balance"
-
-    st.markdown(f"<p style='margin-top:0.6rem;color:#64748b;'>Focus: <strong>{focus}</strong></p>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.write(f"Focus: **{focus}**")
 
     render_portfolio_summary(
         f"Efficient frontier — step {idx + 1}/{len(eff_frontier.points)}",
@@ -243,11 +157,11 @@ def main() -> None:
     )
 
     with st.expander("Visualise the full risk/return curve", expanded=False):
-        fig = portfolio_plots.efficient_frontier_plot(
+        frontier_chart = portfolio_plots.efficient_frontier_plot(
             eff_frontier,
             highlight=(selected_point.volatility, selected_point.expected_return),
         )
-        st.pyplot(fig)
+        st.altair_chart(frontier_chart, use_container_width=True)
 
 
 def get_indices_dataframe() -> pd.DataFrame:
@@ -330,49 +244,49 @@ def render_portfolio_summary(
     annual_vol = portfolio_returns.std() * np.sqrt(config.TRADING_DAYS_PER_YEAR)
     sharpe = 0.0 if annual_vol == 0 else (annual_return / annual_vol)
 
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown(f"<h3 style='margin-top:0;'>{label} portfolio snapshot</h3>", unsafe_allow_html=True)
+    with st.container():
+        st.subheader(f"{label} snapshot")
 
-    metric_cols = st.columns(3)
-    with metric_cols[0]:
-        st.metric("Expected annual return", f"{annual_return*100:.2f}%")
-    with metric_cols[1]:
-        st.metric("Expected annual volatility", f"{annual_vol*100:.2f}%")
-    with metric_cols[2]:
-        st.metric("Return / Risk score", f"{sharpe:.2f}")
+        metric_cols = st.columns(3)
+        with metric_cols[0]:
+            st.metric("Expected annual return", f"{annual_return*100:.2f}%")
+        with metric_cols[1]:
+            st.metric("Expected annual volatility", f"{annual_vol*100:.2f}%")
+        with metric_cols[2]:
+            st.metric("Return / Risk score", f"{sharpe:.2f}")
 
-    st.write("### Allocation overview")
-    st.dataframe(
-        portfolio_plots.allocation_table(weights, asset_names),
-        hide_index=False,
-        use_container_width=True,
-    )
+        st.write("### Allocation overview")
+        st.dataframe(
+            portfolio_plots.allocation_table(weights, asset_names),
+            hide_index=False,
+            use_container_width=True,
+        )
 
-    aligned_prices = prices.ffill().dropna()
-    portfolio_prices = aligned_prices.dot(weights)
-    subtitle = f"Latest value: {portfolio_prices.iloc[-1]:.2f}"
-    fig_price = portfolio_plots.price_evolution(
-        portfolio_prices,
-        title=f"{label} portfolio value",
-        subtitle=subtitle,
-    )
-    fig_weights = portfolio_plots.weights_pie(weights, asset_names)
+        aligned_prices = prices.ffill().dropna()
+        portfolio_prices = aligned_prices.dot(weights)
+        latest_val = portfolio_prices.iloc[-1]
+        subtitle = f"Latest value: €{latest_val:,.2f} | Chart rebased to 100 at start"
+        chart_price = portfolio_plots.price_evolution(
+            portfolio_prices,
+            title=f"{label} value (rebased)",
+            subtitle=subtitle,
+        )
+        chart_weights = portfolio_plots.weights_pie(weights, asset_names)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.pyplot(fig_price)
-    with col2:
-        st.pyplot(fig_weights)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.altair_chart(chart_price, use_container_width=True)
+        with col2:
+            st.altair_chart(chart_weights, use_container_width=True)
 
-    st.markdown("### What this means for you")
-    st.write(
-        """
-        • **Return** is what you could earn on average each year if markets behave like the past. \n
-        • **Volatility** shows how much your portfolio might wobble day to day. Lower means steadier.\n
-        • The **Return / Risk score** helps compare strategies: higher values mean more return per unit of risk.
-        """
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.write("### What this means for you")
+        st.write(
+            """
+            • **Return** is what you could earn on average each year if markets behave like the past.
+            • **Volatility** shows how much your portfolio might wobble day to day. Lower means steadier.
+            • The **Return / Risk score** helps compare strategies: higher values mean more return per unit of risk.
+            """
+        )
 
 
 if __name__ == "__main__":
