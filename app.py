@@ -11,26 +11,127 @@ from dateutil.relativedelta import relativedelta
 from src import config
 from src.data import fetch, filters, sources
 from src.plotting import portfolio as portfolio_plots
-from src.portfolio import bootstrap, frontier, metrics, optimizer
+from src.portfolio import frontier, metrics, optimizer
 from src.ui import state, widgets
 
-st.set_page_config(page_title="European Stocks Selector & Optimiser", layout="wide")
+st.set_page_config(
+    page_title="European Portfolio Co-Pilot",
+    layout="wide",
+    page_icon="💡",
+    initial_sidebar_state="collapsed",
+)
+
+
+def inject_global_styles() -> None:
+    colors = config.THEME_COLORS
+    st.markdown(
+        f"""
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
+
+            html, body, [class^="css"]  {{
+                font-family: 'Poppins', sans-serif;
+                background-color: {colors["bg_light"]};
+            }}
+
+            .stApp {{
+                background-color: {colors["bg_light"]};
+            }}
+
+            .section-card {{
+                background-color: white;
+                padding: 1.5rem;
+                border-radius: 18px;
+                box-shadow: 0 10px 40px rgba(15, 23, 42, 0.08);
+                margin-bottom: 1.5rem;
+                border: 1px solid rgba(15, 23, 42, 0.04);
+            }}
+
+            .metric-card {{
+                padding: 1rem 1.2rem;
+                border-radius: 16px;
+                background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(124, 58, 237, 0.12));
+                border: 1px solid rgba(37, 99, 235, 0.1);
+                color: #0f172a;
+            }}
+
+            .badge {{
+                display: inline-flex;
+                align-items: center;
+                gap: 0.4rem;
+                padding: 0.35rem 0.75rem;
+                border-radius: 999px;
+                font-size: 0.75rem;
+                font-weight: 600;
+                background-color: rgba(37, 99, 235, 0.1);
+                color: {colors["primary"]};
+            }}
+
+            .stButton button {{
+                border-radius: 999px;
+                padding: 0.6rem 1.3rem;
+                font-weight: 600;
+                border: none;
+                background: linear-gradient(135deg, {colors["primary"]}, {colors["accent"]});
+                color: white;
+                box-shadow: 0 12px 30px rgba(37, 99, 235, 0.25);
+                transition: transform 0.15s ease, box-shadow 0.15s ease;
+            }}
+
+            .stButton button:hover {{
+                transform: translateY(-1px);
+                box-shadow: 0 18px 40px rgba(37, 99, 235, 0.35);
+            }}
+
+            .block-container {{
+                padding-top: 1.5rem;
+            }}
+
+            .stRadio > div {{
+                background-color: transparent;
+            }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def main() -> None:
-    st.title("European Stocks Selector & Optimiser")
-    st.caption("Pick your universe, explore optimal portfolios, and visualise allocations.")
+    inject_global_styles()
+
+    st.markdown(
+        """
+        <div class="badge">Smart guidance</div>
+        <h1 style="margin-top:0.6rem;">European Portfolio Co-Pilot</h1>
+        <p style="font-size:0.95rem;color:#475569;max-width:680px;">
+            Explore leading European stocks, compare ready-made strategies, or craft your own mix.
+            We crunch the numbers so you can focus on your goals.
+        </p>
+        """,
+        unsafe_allow_html=True,
+    )
 
     indices_df = get_indices_dataframe()
     if indices_df.empty:
         st.error("No index constituents could be loaded. Check your network connection.")
         return
 
-    with st.sidebar:
-        st.header("Universe")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown("<h3 style='margin-top:0;'>1. Choose your universe</h3>", unsafe_allow_html=True)
+    st.write("Pick your investment playground. We shortlist the stocks that match your filters.")
+
+    top_cols = st.columns([2, 1])
+    with top_cols[0]:
         selected_indices = widgets.multiselect_indices(sorted(config.INDEX_URLS.keys()))
-        min_years = st.slider("Minimum price history (years)", min_value=1, max_value=30, value=config.DEFAULT_HISTORY_YEARS)
-        require_eur = st.checkbox("Only keep EUR-denominated stocks", value=True)
+    with top_cols[1]:
+        min_years = st.slider(
+            "Minimum listing age",
+            min_value=1,
+            max_value=30,
+            value=config.DEFAULT_HISTORY_YEARS,
+            help="Older listings give us enough history to understand how the stock behaves.",
+        )
+        require_eur = st.toggle("Only show EUR stocks", value=True)
 
     filtered = indices_df[indices_df["index_name"].isin(selected_indices)].copy()
     filtered["ticker"] = filtered.apply(_normalise_symbol, axis=1)
@@ -39,33 +140,34 @@ def main() -> None:
     tickers = filtered["ticker"].tolist()
     if not tickers:
         st.warning("No tickers available for the selected indices.")
+        st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    with st.spinner("Filtering tickers..."):
-        history_ok = filters.filter_by_history(tickers, minimum_years=min_years)
-        if require_eur:
-            history_ok = filters.filter_by_currency(history_ok, currency="EUR")
-
+    history_ok = apply_ticker_filters(tickers, min_years, require_eur)
     filtered = filtered[filtered["ticker"].isin(history_ok)]
 
-    st.subheader("Available securities")
-    st.write(
-        filtered[["index_name", "company", "ticker"]]
-        .sort_values(["index_name", "company"])
-        .reset_index(drop=True)
-    )
+    with st.expander("Show company list", expanded=False):
+        st.dataframe(
+            filtered[["index_name", "company", "ticker"]]
+            .sort_values(["index_name", "company"])
+            .reset_index(drop=True),
+            hide_index=True,
+        )
 
     selection = st.multiselect(
-        "Choose stocks for optimisation",
+        "Pick the companies you want to explore",
         options=filtered["ticker"],
         format_func=lambda t: f"{filtered.loc[filtered['ticker']==t, 'company'].iloc[0]} ({t})",
         default=filtered["ticker"].head(8).tolist(),
+        help="You can simply keep the suggested list or build your own watchlist.",
     )
     state.set_selected_tickers(selection)
     chosen = state.get_selected_tickers()
 
+    st.markdown("</div>", unsafe_allow_html=True)
+
     if len(chosen) < 2:
-        st.info("Select at least two securities to build a portfolio.")
+        st.info("Select at least two companies to build a portfolio.")
         return
 
     prices = load_prices(chosen)
@@ -73,44 +175,78 @@ def main() -> None:
         st.error("Unable to download price history for the selected tickers.")
         return
 
-    returns = metrics.daily_returns(prices)
-    mean_vector = metrics.expected_daily_return(returns)
-    covariance_matrix = metrics.covariance_matrix(returns)
+    returns, mean_vector, covariance_matrix = compute_statistics(prices)
 
-    st.subheader("Portfolio Optimisation")
-    approach = st.selectbox(
-        "Select optimisation approach",
-        ("Minimum Risk", "Maximum Return", "Target Return", "Bootstrap"),
+    eff_frontier = frontier.build_frontier(
+        mean_vector,
+        covariance_matrix,
+        steps=config.FRONTIER_POINTS,
     )
 
-    if approach == "Minimum Risk":
-        weights = optimizer.min_volatility(mean_vector, covariance_matrix)
-        label = "Minimum Risk"
-    elif approach == "Maximum Return":
-        weights = optimizer.max_return(mean_vector, covariance_matrix)
-        label = "Maximum Return"
-    elif approach == "Target Return":
-        weights, label = optimise_for_target(mean_vector, covariance_matrix)
-        if weights is None:
-            return
+    min_point = eff_frontier.points[0]
+    max_point = eff_frontier.points[-1]
+    mid_point = eff_frontier.points[len(eff_frontier.points) // 2]
+
+    def _annualised(daily_return: float) -> float:
+        return (1 + daily_return) ** config.TRADING_DAYS_PER_YEAR - 1
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown("<h3 style='margin-top:0;'>2. Shape your risk & return</h3>", unsafe_allow_html=True)
+    st.write("Slide along the efficient frontier to balance confidence and ambition.")
+
+    metrics_cols = st.columns(3)
+    with metrics_cols[0]:
+        st.metric(
+            "Safest mix",
+            f"{_annualised(min_point.expected_return):.2%}",
+            help="Annualised return of the minimum-risk portfolio.",
+        )
+    with metrics_cols[1]:
+        st.metric(
+            "Balanced option",
+            f"{_annualised(mid_point.expected_return):.2%}",
+            help="Return halfway along the curve.",
+        )
+    with metrics_cols[2]:
+        st.metric(
+            "Max performance",
+            f"{_annualised(max_point.expected_return):.2%}",
+            help="Annualised return of the highest-return mix.",
+        )
+
+    risk_level = st.slider(
+        "Move the slider to tune your risk appetite",
+        min_value=0,
+        max_value=100,
+        value=0,
+        help="0% keeps risk at its minimum. 100% pursues the highest return on the curve.",
+    )
+    idx = int(round(risk_level / 100 * (len(eff_frontier.points) - 1)))
+    selected_point = eff_frontier.points[idx]
+
+    if risk_level == 0:
+        focus = "Safest mix"
+    elif risk_level == 100:
+        focus = "Maximum performance"
     else:
-        result = bootstrap.bootstrap_frontiers(
-            returns.to_numpy(),
-            runs=config.BOOTSTRAP_SETTINGS.runs,
-            steps=config.BOOTSTRAP_SETTINGS.frontier_points,
-        )
-        weights = result.representative.points[0].weights
-        label = "Bootstrap Clusteroid"
+        focus = "Custom balance"
 
-    render_portfolio_summary(label, weights, returns, prices, filtered)
+    st.markdown(f"<p style='margin-top:0.6rem;color:#64748b;'>Focus: <strong>{focus}</strong></p>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    with st.expander("Efficient frontier", expanded=False):
-        base_frontier = frontier.build_frontier(
-            mean_vector,
-            covariance_matrix,
-            steps=config.FRONTIER_POINTS,
+    render_portfolio_summary(
+        f"Efficient frontier — step {idx + 1}/{len(eff_frontier.points)}",
+        selected_point.weights,
+        returns,
+        prices,
+        filtered,
+    )
+
+    with st.expander("Visualise the full risk/return curve", expanded=False):
+        fig = portfolio_plots.efficient_frontier_plot(
+            eff_frontier,
+            highlight=(selected_point.volatility, selected_point.expected_return),
         )
-        fig = portfolio_plots.efficient_frontier_plot(base_frontier)
         st.pyplot(fig)
 
 
@@ -145,30 +281,38 @@ def load_prices(tickers: list[str]) -> pd.DataFrame:
     return _download(tuple(sorted(tickers)))
 
 
-def optimise_for_target(mean_vector: np.ndarray, covariance_matrix: np.ndarray) -> tuple[np.ndarray | None, str]:
-    base_frontier = frontier.build_frontier(mean_vector, covariance_matrix, steps=config.FRONTIER_POINTS)
-    min_return = base_frontier.points[0].expected_return
-    max_return = base_frontier.points[-1].expected_return
+@st.cache_data(ttl=config.CACHE_TTL)
+def compute_statistics(prices: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+    clean_prices = prices.ffill().dropna()
+    returns = metrics.daily_returns(clean_prices).dropna(how="any")
+    mean_vector = metrics.expected_daily_return(returns)
+    covariance_matrix = metrics.covariance_matrix(returns)
+    if covariance_matrix.size:
+        covariance_matrix += np.eye(covariance_matrix.shape[0]) * 1e-6
+    return returns, mean_vector, covariance_matrix
 
-    min_annual = (1 + min_return) ** config.TRADING_DAYS_PER_YEAR - 1
-    max_annual = (1 + max_return) ** config.TRADING_DAYS_PER_YEAR - 1
 
-    target_annual = st.slider(
-        "Target annual return (%)",
-        min_value=float(min_annual * 100),
-        max_value=float(max_annual * 100),
-        value=float((min_annual + max_annual) / 2 * 100),
-    )
+@st.cache_data(ttl=config.CACHE_TTL)
+def filter_tickers(symbols: tuple[str, ...], min_years: int, require_eur: bool) -> list[str]:
+    tickers = filters.filter_by_history(symbols, minimum_years=min_years)
+    if require_eur:
+        tickers = filters.filter_by_currency(tickers, currency="EUR")
+    return tickers
 
-    target_daily = (1 + target_annual / 100) ** (1 / config.TRADING_DAYS_PER_YEAR) - 1
 
-    try:
-        weights = optimizer.min_volatility_for_return(mean_vector, covariance_matrix, target_daily)
-    except RuntimeError as exc:  # pragma: no cover - streamlit feedback
-        st.error(f"Optimisation failed: {exc}")
-        return None, "Target Return"
+def apply_ticker_filters(tickers: list[str], min_years: int, require_eur: bool) -> list[str]:
+    cache_key = (min_years, require_eur)
+    cache = st.session_state.setdefault("_ticker_filters", {})
+    state: dict[str, bool] = cache.setdefault(cache_key, {})
 
-    return weights, f"Target Return ({target_annual:.2f}% annual)"
+    missing = [symbol for symbol in tickers if symbol not in state]
+    if missing:
+        with st.spinner(f"Filtering {len(missing)} new tickers..."):
+            valid_symbols = set(filter_tickers(tuple(sorted(missing)), min_years, require_eur))
+        for symbol in missing:
+            state[symbol] = symbol in valid_symbols
+
+    return [symbol for symbol in tickers if state.get(symbol, False)]
 
 
 def render_portfolio_summary(
@@ -179,22 +323,39 @@ def render_portfolio_summary(
     meta: pd.DataFrame,
 ) -> None:
     state.set_weights(weights)
-    asset_names = [meta.loc[meta["ticker"] == ticker, "company"].iloc[0] for ticker in prices.columns]
 
+    asset_names = [meta.loc[meta["ticker"] == ticker, "company"].iloc[0] for ticker in prices.columns]
     portfolio_returns = returns.to_numpy().dot(weights)
     annual_return = (1 + portfolio_returns.mean()) ** config.TRADING_DAYS_PER_YEAR - 1
     annual_vol = portfolio_returns.std() * np.sqrt(config.TRADING_DAYS_PER_YEAR)
+    sharpe = 0.0 if annual_vol == 0 else (annual_return / annual_vol)
 
-    st.markdown(f"### {label} Portfolio")
-    st.write(f"Annualised return: **{annual_return*100:.2f}%**")
-    st.write(f"Annualised volatility: **{annual_vol*100:.2f}%**")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown(f"<h3 style='margin-top:0;'>{label} portfolio snapshot</h3>", unsafe_allow_html=True)
 
-    table = portfolio_plots.allocation_table(weights, asset_names)
-    st.dataframe(table)
+    metric_cols = st.columns(3)
+    with metric_cols[0]:
+        st.metric("Expected annual return", f"{annual_return*100:.2f}%")
+    with metric_cols[1]:
+        st.metric("Expected annual volatility", f"{annual_vol*100:.2f}%")
+    with metric_cols[2]:
+        st.metric("Return / Risk score", f"{sharpe:.2f}")
 
-    latest_prices = prices.dot(weights)
-    subtitle = f"Latest value: {latest_prices.iloc[-1]:.2f}"
-    fig_price = portfolio_plots.price_evolution(latest_prices, title=f"{label} Portfolio Value", subtitle=subtitle)
+    st.write("### Allocation overview")
+    st.dataframe(
+        portfolio_plots.allocation_table(weights, asset_names),
+        hide_index=False,
+        use_container_width=True,
+    )
+
+    aligned_prices = prices.ffill().dropna()
+    portfolio_prices = aligned_prices.dot(weights)
+    subtitle = f"Latest value: {portfolio_prices.iloc[-1]:.2f}"
+    fig_price = portfolio_plots.price_evolution(
+        portfolio_prices,
+        title=f"{label} portfolio value",
+        subtitle=subtitle,
+    )
     fig_weights = portfolio_plots.weights_pie(weights, asset_names)
 
     col1, col2 = st.columns(2)
@@ -202,6 +363,16 @@ def render_portfolio_summary(
         st.pyplot(fig_price)
     with col2:
         st.pyplot(fig_weights)
+
+    st.markdown("### What this means for you")
+    st.write(
+        """
+        • **Return** is what you could earn on average each year if markets behave like the past. \n
+        • **Volatility** shows how much your portfolio might wobble day to day. Lower means steadier.\n
+        • The **Return / Risk score** helps compare strategies: higher values mean more return per unit of risk.
+        """
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

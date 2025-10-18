@@ -18,8 +18,7 @@ def min_volatility(mean: np.ndarray, covariance: np.ndarray, *, bounds: Bounds |
     """Return weights minimising portfolio volatility subject to full investment."""
     return _optimise(
         mean,
-        covariance,
-        objective=_volatility_objective,
+        objective=lambda w: _portfolio_volatility(w, covariance),
         bounds=bounds or _default_bounds(len(mean)),
         constraints=(
             {"type": "eq", "fun": lambda w: np.sum(w) - 1.0},
@@ -29,15 +28,11 @@ def min_volatility(mean: np.ndarray, covariance: np.ndarray, *, bounds: Bounds |
 
 def max_return(mean: np.ndarray, covariance: np.ndarray, *, bounds: Bounds | None = None) -> np.ndarray:
     """Return weights maximising portfolio return subject to full investment."""
-    return _optimise(
-        mean,
-        covariance,
-        objective=lambda w: -w.dot(mean),
-        bounds=bounds or _default_bounds(len(mean)),
-        constraints=(
-            {"type": "eq", "fun": lambda w: np.sum(w) - 1.0},
-        ),
-    )
+    _ = covariance  # Covariance not needed for pure return maximisation
+    idx = int(np.argmax(mean))
+    weights = np.zeros_like(mean, dtype=float)
+    weights[idx] = 1.0
+    return weights
 
 
 def min_volatility_for_return(
@@ -50,8 +45,7 @@ def min_volatility_for_return(
     """Return weights with minimum volatility for a target daily return."""
     return _optimise(
         mean,
-        covariance,
-        objective=_volatility_objective,
+        objective=lambda w: _portfolio_volatility(w, covariance),
         bounds=bounds or _default_bounds(len(mean)),
         constraints=(
             {"type": "eq", "fun": lambda w: np.sum(w) - 1.0},
@@ -62,7 +56,6 @@ def min_volatility_for_return(
 
 def _optimise(
     mean: np.ndarray,
-    covariance: np.ndarray,
     *,
     objective: Callable[[np.ndarray], float],
     bounds: Bounds,
@@ -85,12 +78,8 @@ def _optimise(
     return result.x
 
 
-def _volatility_objective(weights: np.ndarray) -> float:
-    return _portfolio_variance(weights) ** 0.5
-
-
-def _portfolio_variance(weights: np.ndarray) -> float:
-    raise NotImplementedError("Variance objective requires covariance matrix context")
+def _portfolio_volatility(weights: np.ndarray, covariance: np.ndarray) -> float:
+    return float(np.sqrt(weights.T @ covariance @ weights))
 
 
 def _default_bounds(size: int) -> Bounds:

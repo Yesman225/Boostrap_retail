@@ -29,6 +29,12 @@ class EfficientFrontier:
             }
         )
 
+    def expected_returns(self) -> np.ndarray:
+        return np.fromiter((p.expected_return for p in self.points), dtype=float)
+
+    def volatilities(self) -> np.ndarray:
+        return np.fromiter((p.volatility for p in self.points), dtype=float)
+
     def weight_matrix(self) -> np.ndarray:
         return np.vstack([p.weights for p in self.points])
 
