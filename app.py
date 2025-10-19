@@ -131,17 +131,17 @@ def main() -> None:
 
         risk_level = st.slider(
             "Move the slider to tune your risk appetite",
-            min_value=0,
-            max_value=100,
+            min_value=1,
+            max_value=len(eff_frontier.points),
             value=0,
             help="0% keeps risk at its minimum. 100% pursues the highest return on the curve.",
         )
-        idx = int(round(risk_level / 100 * (len(eff_frontier.points) - 1)))
+        idx = risk_level
         selected_point = eff_frontier.points[idx]
 
-        if risk_level == 0:
+        if risk_level == 1:
             focus = "Safest mix"
-        elif risk_level == 100:
+        elif risk_level == len(eff_frontier.points):
             focus = "Maximum performance"
         else:
             focus = "Custom balance"
