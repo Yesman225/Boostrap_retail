@@ -26,7 +26,7 @@ def main() -> None:
     st.title("European Portfolio Co-Pilot")
     st.caption(
         """
-        Explore leading European stocks, compare ready-made strategies, or craft your own mix. \n
+        Explore leading European stocks, compare ready-made strategies, or craft your own mix.
         We crunch the numbers so you can focus on your goals."""
     )
 
@@ -139,6 +139,7 @@ def main() -> None:
             min_value=1,
             max_value=len(eff_frontier.points),
             value=1,
+            help="1 = lowest risk, {} = highest risk".format(len(eff_frontier.points)),
         )
         idx = risk_level - 1
         selected_point = eff_frontier.points[idx]
@@ -311,13 +312,14 @@ def render_portfolio_summary(
         with col2:
             st.altair_chart(chart_weights, use_container_width=True)
 
-        st.write("### What this means for you")
         st.write(
             """
-            • **Return** is what you could earn on average each year if markets behave like the past.\n
-            • **Volatility** shows how much your portfolio might wobble day to day. Lower means steadier.\n
+            • **Return** is what you could earn on average each year if markets behave like the past.
+            • **Return** is what you could earn on average each year if markets behave like the past.
+            • **Volatility** shows how much your portfolio might wobble day to day. Lower means steadier.
             • The **Return / Risk score** helps compare strategies: higher values mean more return per unit of risk.
             """
+        )
         )
 
 
