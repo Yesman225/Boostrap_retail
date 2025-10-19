@@ -13,6 +13,8 @@ from src.data import fetch, filters, sources
 from src.plotting import portfolio as portfolio_plots
 from src.portfolio import frontier, metrics, optimizer
 from src.ui import state, widgets
+from PIL import Image
+import base64
 
 st.set_page_config(
     page_title="European Portfolio Co-Pilot",
@@ -20,6 +22,38 @@ st.set_page_config(
     page_icon="💡",
     initial_sidebar_state="collapsed",
 )
+
+
+# --- LOGO FIXE EN HAUT À DROITE ---
+image_path = "logo/Quantiva.PNG"
+
+
+with open(image_path, "rb") as f:
+    data = f.read()
+    encoded = base64.b64encode(data).decode()
+
+st.markdown(
+        f"""
+        <style>
+            .logo-container {{
+                position: absolute;
+                top: 15px;
+                right: 25px;
+                width: 450px;
+                z-index: 999;
+            }}
+            /* Enlève la marge créée par Streamlit */
+            section[data-testid="stSidebar"] + div {{
+                margin-top: -60px;
+            }}
+        </style>
+        <div class="logo-container">
+            <img src="data:image/png;base64,{encoded}">
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 
 
 def main() -> None:
@@ -255,7 +289,7 @@ def render_portfolio_summary(
         with metric_cols[2]:
             st.metric("Return / Risk score", f"{sharpe:.2f}")
 
-        st.write("### Allocation overview")
+        st.write("### 3. Allocation overview")
         st.dataframe(
             portfolio_plots.allocation_table(weights, asset_names),
             hide_index=False,
