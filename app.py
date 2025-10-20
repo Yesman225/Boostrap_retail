@@ -11,7 +11,7 @@ from dateutil.relativedelta import relativedelta
 from src import config
 from src.data import fetch, filters, sources
 from src.plotting import portfolio as portfolio_plots
-from src.portfolio import frontier, metrics, optimizer
+from src.portfolio import frontier, metrics, optimizer, bootstrap
 from src.ui import state, widgets
 from PIL import Image
 import base64
@@ -59,8 +59,9 @@ st.markdown(
 def main() -> None:
     st.title("European Portfolio Co-Pilot")
     st.caption(
-        "Explore leading European stocks, compare ready-made strategies, or craft your own mix. "
-        "We crunch the numbers so you can focus on your goals."
+        """
+        Explore leading European stocks, compare ready-made strategies, or craft your own mix.
+        We crunch the numbers so you can focus on your goals."""
     )
 
     indices_df = get_indices_dataframe()
@@ -126,11 +127,10 @@ def main() -> None:
 
     returns, mean_vector, covariance_matrix = compute_statistics(prices)
 
-    eff_frontier = frontier.build_frontier(
-        mean_vector,
-        covariance_matrix,
-        steps=config.FRONTIER_POINTS,
-    )
+    # Build a bootstrapped efficient frontier (Font, 2016 style), cached
+    bs = config.BOOTSTRAP_SETTINGS
+    bs_result = get_bootstrap_result(returns, bs.runs, bs.frontier_points, bs.percentile)
+    eff_frontier = bs_result.representative
 
     min_point = eff_frontier.points[0]
     max_point = eff_frontier.points[-1]
@@ -143,34 +143,39 @@ def main() -> None:
         st.subheader("2. Shape your risk & return")
         st.write("Slide along the efficient frontier to balance stability and growth.")
 
+        # Compute full-sample expected returns for displayed KPIs
+        kpi_min_er = float(min_point.weights.dot(mean_vector))
+        kpi_mid_er = float(mid_point.weights.dot(mean_vector))
+        kpi_max_er = float(max_point.weights.dot(mean_vector))
+
         metrics_cols = st.columns(3)
         with metrics_cols[0]:
             st.metric(
                 "Safest mix",
-                f"{_annualised(min_point.expected_return):.2%}",
-                help="Annualised return of the minimum-risk portfolio.",
+                f"{_annualised(kpi_min_er):.2%}",
+                help="Annualised return (full-sample) of the minimum-risk portfolio.",
             )
         with metrics_cols[1]:
             st.metric(
                 "Balanced option",
-                f"{_annualised(mid_point.expected_return):.2%}",
-                help="Return halfway along the curve.",
+                f"{_annualised(kpi_mid_er):.2%}",
+                help="Annualised return (full-sample) halfway along the curve.",
             )
         with metrics_cols[2]:
             st.metric(
                 "Max performance",
-                f"{_annualised(max_point.expected_return):.2%}",
-                help="Annualised return of the highest-return mix.",
+                f"{_annualised(kpi_max_er):.2%}",
+                help="Annualised return (full-sample) of the highest-return mix.",
             )
 
         risk_level = st.slider(
             "Move the slider to tune your risk appetite",
             min_value=1,
             max_value=len(eff_frontier.points),
-            value=0,
-            help="0% keeps risk at its minimum. 100% pursues the highest return on the curve.",
+            value=1,
+            help="1 = lowest risk, {} = highest risk".format(len(eff_frontier.points)),
         )
-        idx = risk_level
+        idx = risk_level - 1
         selected_point = eff_frontier.points[idx]
 
         if risk_level == 1:
@@ -182,17 +187,21 @@ def main() -> None:
 
         st.write(f"Focus: **{focus}**")
 
+    # Pre-align prices once for faster re-renders
+    aligned_prices = prices.ffill().dropna()
+
     render_portfolio_summary(
         f"Efficient frontier — step {idx + 1}/{len(eff_frontier.points)}",
         selected_point.weights,
         returns,
-        prices,
+        aligned_prices,
         filtered,
     )
 
     with st.expander("Visualise the full risk/return curve", expanded=False):
         frontier_chart = portfolio_plots.efficient_frontier_plot(
             eff_frontier,
+            subset=bs_result.subset,
             highlight=(selected_point.volatility, selected_point.expected_return),
         )
         st.altair_chart(frontier_chart, use_container_width=True)
@@ -241,6 +250,29 @@ def compute_statistics(prices: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray, 
 
 
 @st.cache_data(ttl=config.CACHE_TTL)
+def get_bootstrap_result(
+    returns_df: pd.DataFrame,
+    runs: int,
+    steps: int,
+    percentile: float,
+    *,
+    seed: int | None = None,
+):
+    """Cached wrapper for bootstrapped frontier computation.
+
+    Caches on the returns DataFrame and parameters to avoid recomputation
+    when the user moves the risk slider.
+    """
+    return bootstrap.bootstrap_frontiers(
+        returns_df.to_numpy(),
+        runs=runs,
+        steps=steps,
+        percentile=percentile,
+        random_state=seed,
+    )
+
+
+@st.cache_data(ttl=config.CACHE_TTL)
 def filter_tickers(symbols: tuple[str, ...], min_years: int, require_eur: bool) -> list[str]:
     tickers = filters.filter_by_history(symbols, minimum_years=min_years)
     if require_eur:
@@ -267,12 +299,14 @@ def render_portfolio_summary(
     label: str,
     weights: np.ndarray,
     returns: pd.DataFrame,
-    prices: pd.DataFrame,
+    aligned_prices: pd.DataFrame,
     meta: pd.DataFrame,
 ) -> None:
     state.set_weights(weights)
 
-    asset_names = [meta.loc[meta["ticker"] == ticker, "company"].iloc[0] for ticker in prices.columns]
+    # Fast label resolution without per-ticker DataFrame filtering
+    _name_map = dict(zip(meta["ticker"].astype(str), meta["company"].astype(str)))
+    asset_names = [_name_map.get(t, t) for t in aligned_prices.columns]
     portfolio_returns = returns.to_numpy().dot(weights)
     annual_return = (1 + portfolio_returns.mean()) ** config.TRADING_DAYS_PER_YEAR - 1
     annual_vol = portfolio_returns.std() * np.sqrt(config.TRADING_DAYS_PER_YEAR)
@@ -296,10 +330,9 @@ def render_portfolio_summary(
             use_container_width=True,
         )
 
-        aligned_prices = prices.ffill().dropna()
         portfolio_prices = aligned_prices.dot(weights)
         latest_val = portfolio_prices.iloc[-1]
-        subtitle = f"Latest value: €{latest_val:,.2f} | Chart rebased to 100 at start"
+        subtitle = f"Chart rebased to 100 at start"
         chart_price = portfolio_plots.price_evolution(
             portfolio_prices,
             title=f"{label} value (rebased)",
@@ -313,14 +346,15 @@ def render_portfolio_summary(
         with col2:
             st.altair_chart(chart_weights, use_container_width=True)
 
-        st.write("### What this means for you")
         st.write(
             """
+            • **Return** is what you could earn on average each year if markets behave like the past.
             • **Return** is what you could earn on average each year if markets behave like the past.
             • **Volatility** shows how much your portfolio might wobble day to day. Lower means steadier.
             • The **Return / Risk score** helps compare strategies: higher values mean more return per unit of risk.
             """
         )
+        
 
 
 if __name__ == "__main__":
