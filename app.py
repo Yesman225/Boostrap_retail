@@ -298,7 +298,7 @@ def render_portfolio_summary(
 
         portfolio_prices = aligned_prices.dot(weights)
         latest_val = portfolio_prices.iloc[-1]
-        subtitle = f"Latest value: €{latest_val:,.2f} | Chart rebased to 100 at start"
+        subtitle = f"Chart rebased to 100 at start"
         chart_price = portfolio_plots.price_evolution(
             portfolio_prices,
             title=f"{label} value (rebased)",
@@ -320,7 +320,7 @@ def render_portfolio_summary(
             • The **Return / Risk score** helps compare strategies: higher values mean more return per unit of risk.
             """
         )
-        )
+        
 
 
 if __name__ == "__main__":
